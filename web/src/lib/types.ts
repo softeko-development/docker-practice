@@ -24,8 +24,7 @@ export type CreateUserInput = {
   bio?: string;
 };
 
-export type CreateUserState = {
-  ok: boolean;
+export type ApiError = {
   message?: string;
-  fieldErrors?: Record<string, string[]>;
+  errors?: Record<string, string[]>;
 };

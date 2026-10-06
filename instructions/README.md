@@ -16,7 +16,7 @@ This folder has three guides. Do them **in order**. Each one ends with a checkli
 | Web (Next.js) | `web/` | 3000 | The API |
 | Database | _you add it in guide 3_ | 5432 | |
 
-The web app lists users and has a "New user" modal. The API has `GET /api/users`, `POST /api/users` and `GET /health`.
+The web app lists users (server component) and has a "New user" modal (client component that calls the API from the browser). The API has `GET /api/users`, `POST /api/users` and `GET /health`.
 
 ## Rules
 
@@ -26,7 +26,22 @@ The web app lists users and has a "New user" modal. The API has `GET /api/users`
 
 ## Prerequisites
 
-- Docker Desktop running (`docker version` shows both Client and Server).
+- Linux with **Docker Engine** and the **Compose plugin** installed (Docker Desktop is not needed). Follow the official install guide for your distro: https://docs.docker.com/engine/install/
+- Your user can run Docker without `sudo`:
+
+  ```sh
+  sudo usermod -aG docker $USER   # then log out and back in
+  ```
+
+- Check everything works:
+
+  ```sh
+  docker version            # must show both Client and Server
+  docker compose version    # must work (note: "docker compose", not "docker-compose")
+  docker run --rm hello-world
+  ```
+
+  If `docker version` shows no Server section, the daemon is not running: `sudo systemctl enable --now docker`.
 - Node.js 20+ (only needed if you want to run the apps without Docker first).
 
 ## Optional: run without Docker first

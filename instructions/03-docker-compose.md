@@ -173,9 +173,12 @@ Add:
 
 ```yaml
   web:
-    build: ./web
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: ???   # BUILD time: used by the browser
     environment:
-      API_URL: ???               # the API, reached by its service name and container port
+      API_URL: ???                 # RUN time: used by the Next.js server
     ports:
       - "3000:3000"
     depends_on:
@@ -184,7 +187,16 @@ Add:
     restart: unless-stopped
 ```
 
-Think: what is `API_URL`? The web container calls the API **over the compose network**, so the host is the service name `api` and the port is the **container** port, followed by `/api`.
+The web app talks to the API from **two different places**, so it needs two different URLs:
+
+| Variable | Who calls the API? | Network it is on | Value |
+| --- | --- | --- | --- |
+| `API_URL` | Next.js **server** (users list) inside the web container | compose network | service name + container port + `/api` |
+| `NEXT_PUBLIC_API_URL` | the **browser** (create-user modal) on your computer | your host machine | `localhost` + the **published** port + `/api` |
+
+The browser cannot resolve `api`; that name only exists inside Docker. It reaches the API through the published port `4000:4000`.
+
+`NEXT_PUBLIC_API_URL` is baked in at build time, so it goes under `build.args` (which feed the `ARG` you wrote in Guide 2), not under `environment`. Changing it later means rebuilding: `docker compose up -d --build web`.
 
 Start everything:
 
@@ -198,7 +210,9 @@ Open http://localhost:3000, check the list, click **New user**, create one. It s
 ## Step 5: Experiments
 
 1. `docker compose stop api` then reload the web page. What do you see? Start it again with `docker compose start api`.
-2. Change `API_URL` to `http://localhost:4000/api`, restart web (`docker compose up -d web`). Why does it fail?
+2. Change `API_URL` to `http://localhost:4000/api`, restart web (`docker compose up -d web`). The list fails to load. Why? Revert it.
+2b. Now change `NEXT_PUBLIC_API_URL` to `http://api:4000/api` and rebuild (`docker compose up -d --build web`). The list still loads (server-side), but creating a user fails. Open the browser dev tools. What error do you see, and why? Revert it.
+2c. Change only `CORS_ORIGIN` on the api to `http://localhost:9999` and restart it. Create a user. What does the browser report? Revert it.
 3. `docker compose exec web sh`, then `wget -qO- http://api:4000/health`. Name resolution works. Try `wget -qO- http://db:5432`. It can resolve the name, so web and db can currently talk to each other. Is that good?
 4. `docker compose down`, `docker compose up -d`. Is your user still in the list? Why?
 5. `docker compose config` prints the final merged YAML with variables filled in.
@@ -221,6 +235,7 @@ Add a top-level `networks:` section, then add `networks:` to each service. Prove
 - [ ] Only ports 3000 and 4000 are published; the DB is not
 - [ ] No passwords are written directly in `docker-compose.yml`
 - [ ] You can explain why `DATABASE_URL` uses host `db` and `API_URL` uses host `api`
+- [ ] You can explain why `NEXT_PUBLIC_API_URL` uses `localhost:4000` and is a build arg, not an environment variable
 
 ## Common problems
 
@@ -231,6 +246,7 @@ Add a top-level `networks:` section, then add `networks:` to each service. Prove
 | `ECONNREFUSED 127.0.0.1:5432` | You used `localhost` instead of `db` |
 | `password authentication failed` | The DB volume was created with an older password. Run `docker compose down -v` and start again |
 | Web shows `fetch failed` | `API_URL` wrong, or the API is not healthy |
+| List loads but creating a user fails | `NEXT_PUBLIC_API_URL` wrong (browser can't reach it), changed without rebuilding, or the API's `CORS_ORIGIN` doesn't match |
 | Healthcheck always `unhealthy` | `wget` missing in image, wrong port, or the app is not listening yet. See `docker inspect --format '{{json .State.Health}}' <container>` |
 | Changed code but nothing changed | Rebuild: `docker compose up -d --build` |
 
@@ -309,7 +325,10 @@ services:
     restart: unless-stopped
 
   web:
-    build: ./web
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:4000/api
     environment:
       API_URL: http://api:4000/api
     ports:

@@ -1,4 +1,4 @@
-// Read lazily: `next build` imports this module without runtime env vars
+// Server-only. Read lazily: `next build` imports this module without runtime env vars
 // (e.g. inside a Docker build), so only fail when the value is actually used.
 export const env = {
   get apiUrl(): string {
