@@ -1,0 +1,57 @@
+:root {
+  --bg: #f7f7f8;
+  --fg: #1a1a1f;
+  --muted: #6b6b76;
+  --border: #e2e2e8;
+  --primary: #2563eb;
+  --danger: #dc2626;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.container { max-width: 900px; margin: 0 auto; padding: 2rem 1rem; }
+.page-header { display: flex; justify-content: space-between; align-items: center; }
+.muted { color: var(--muted); }
+
+.btn {
+  background: var(--primary); color: #fff; border: 0; border-radius: 6px;
+  padding: 0.55rem 1rem; font-size: 0.95rem; cursor: pointer;
+}
+.btn:disabled { opacity: 0.6; cursor: wait; }
+.btn.secondary { background: #fff; color: var(--fg); border: 1px solid var(--border); }
+
+.search { display: flex; gap: 0.5rem; margin: 1rem 0; }
+.search input { flex: 1; }
+
+input, textarea {
+  width: 100%; padding: 0.5rem 0.65rem; border: 1px solid var(--border);
+  border-radius: 6px; font: inherit; background: #fff;
+}
+
+.table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; }
+.table th, .table td { text-align: left; padding: 0.65rem 0.8rem; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+.table th { background: #fafafa; font-weight: 600; }
+
+.pager { display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; }
+.pager a { color: var(--primary); text-decoration: none; }
+
+.overlay {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45);
+  display: grid; place-items: center; padding: 1rem;
+}
+.modal { background: #fff; border-radius: 10px; width: 100%; max-width: 420px; padding: 1.25rem; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+.modal-header h2 { margin: 0; font-size: 1.15rem; }
+.icon-btn { background: none; border: 0; font-size: 1.5rem; cursor: pointer; line-height: 1; }
+
+.form { display: flex; flex-direction: column; gap: 0.9rem; }
+.form label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.9rem; font-weight: 500; }
+.error { color: var(--danger); font-size: 0.8rem; font-weight: 400; }
+.banner { background: #fef2f2; padding: 0.5rem 0.75rem; border-radius: 6px; margin: 0; }
