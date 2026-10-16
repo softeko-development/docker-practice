@@ -1,6 +1,6 @@
 # Task 4: Make the Users API a Real REST API
 
-Goal: take the existing `users` endpoints and make them follow REST conventions properly: all the HTTP methods, correct status codes, validation, caching with ETag, versioning, and simple authentication and authorization.
+Goal: take the existing `users` endpoints and make them follow REST conventions properly: all the HTTP methods, correct status codes, validation, caching with ETag, versioning, simple authentication and authorization, and hypermedia links (HATEOAS).
 
 You will work on the **users resource that already exists**. No new resource. Everything stays in:
 
@@ -211,6 +211,33 @@ We will not build real login. We use **fixed tokens** so you learn the HTTP side
 
 ---
 
+## Level 7: Hypermedia (HATEOAS)
+
+> How to: [implementation guide, Level 7](04-rest-api-implementation.md#level-7-hypermedia-hateoas)
+
+So far a client must **know** your URLs (`/api/v1/users/5`, `?page=2`). In a hypermedia API the response tells the client where it can go next, and the client follows links instead of building URLs.
+
+Requirements:
+
+1. **Entry point.** `GET /api/v1` is public and returns links to the main things a client can do (`users`, `signup`, `health`, and itself).
+2. **Link format.** Every response that contains links uses one `_links` object. Each link is `{ "href": "...", "method": "..." }`, and the key is the relation name (`self`, `collection`, `next`, `prev`, `first`, `last`, `create`, `update`, `replace`, `delete`).
+3. **Single user** (`GET`, `POST`, `PUT`, `PATCH` responses): `self` and `collection` for everybody. `replace`, `update` and `delete` **only for admins**.
+4. **User list:** each item has its own `_links`; the list itself has `self`, `first`, `last`, `create`, and `next`/`prev` **only when that page exists**. Keep the `Link` header from Level 2 as well.
+5. Build every `href` from `req.baseUrl`. No hardcoded `/api/v1` strings in `users.ts`.
+6. Add `Vary: Authorization` to the responses whose body now depends on the caller's role. Be able to explain why.
+7. The web app must keep working (it ignores the extra field).
+
+Prove it by following links only:
+- From `GET /api/v1`, reach the first page of users, then the last page, using nothing but `_links.*.href`.
+- With an admin token, delete a user using only the `href` and `method` from that user's `_links.delete`.
+
+Think about:
+- A normal user does not get a `delete` link. Is that enough to stop them deleting? What stops them?
+- When is a link "a lie"? Give an example for this API.
+- What does a client lose if it hardcodes URLs anyway?
+
+---
+
 ## Stretch goals
 
 Do these only after everything above works. Each one is explained in detail (goal, why, plan, hints, tests, pitfalls) in the [implementation guide](04-rest-api-implementation.md#stretch-goals-in-detail).
@@ -283,6 +310,7 @@ curl -i localhost:4000/api/users                                      # your ver
 - [ ] Bearer-token auth with `401` + `WWW-Authenticate`; role check with `403`
 - [ ] Tokens compared in constant time; the web token is server-only (no `NEXT_PUBLIC_`)
 - [ ] Rate limit with `429` + `Retry-After`
+- [ ] `GET /api/v1` entry point; `_links` on users and on the list; admin-only action links; `Vary: Authorization`
 - [ ] One consistent error shape; malformed JSON returns `400`; no internals leaked
 - [ ] `docker compose up --build` from a clean state still gives a working app
 
@@ -298,3 +326,5 @@ curl -i localhost:4000/api/users                                      # your ver
 8. Why can the Next.js server send `API_TOKEN` but the browser can't?
 9. Which of your decisions would break existing clients if you changed it later, and how does versioning help?
 10. What would you split out of `users.ts` first if it grew to 800 lines?
+11. What is HATEOAS, and what does a client gain and lose when it follows links instead of building URLs?
+12. Why is hiding the `delete` link not an authorization mechanism?

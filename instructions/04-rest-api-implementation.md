@@ -2,7 +2,7 @@
 
 This is the "how" for [04-rest-api-task.md](04-rest-api-task.md). **Try each level yourself first.** Open this guide when you are stuck, read only the part for that level, then close it and write the code again in your own words.
 
-The code for Levels 1 to 6 and the reference files at the bottom were run against a real database with the `curl` commands from the task. The stretch goals are outlines with hints, not finished code. But the goal is not to copy: for every line you must be able to say what it does and what breaks if you remove it.
+The code for Levels 1 to 7 and the reference files at the bottom were run against a real database with the `curl` commands from the task. The stretch goals are outlines with hints, not finished code. But the goal is not to copy: for every line you must be able to say what it does and what breaks if you remove it.
 
 ## Contents
 
@@ -13,6 +13,7 @@ The code for Levels 1 to 6 and the reference files at the bottom were run agains
 - [Level 4: Versioning](#level-4-versioning)
 - [Level 5: Authentication and authorization](#level-5-authentication-and-authorization)
 - [Level 6: Hardening](#level-6-hardening)
+- [Level 7: Hypermedia (HATEOAS)](#level-7-hypermedia-hateoas)
 - [Docker and web app changes](#docker-and-web-app-changes)
 - [Stretch goals in detail](#stretch-goals-in-detail)
 - [Complete reference files](#complete-reference-files)
@@ -662,6 +663,158 @@ Try swapping two and see what breaks. That is the fastest way to learn it.
 
 ---
 
+## Level 7: Hypermedia (HATEOAS)
+
+### The idea
+
+**HATEOAS** = *Hypermedia As The Engine Of Application State*. Every response contains **links** that tell the client what it can do next. The client starts at one known URL and **follows links** instead of building URLs from documentation.
+
+A web page works this way: you do not type `/orders/42/cancel` into your browser, you click a button the server gave you. HATEOAS gives API clients the same thing. (In the Richardson maturity model this is the last step, "level 3" of REST.)
+
+Benefits:
+- The server can change URLs without breaking clients, because clients read the URL from the response.
+- The server can show **only the actions that are currently possible** (an admin sees "delete", a normal user does not; a post that is already published has no "publish" link).
+- A new developer can explore the API by following links from the root.
+
+Honest note: full HATEOAS is rare in the wild. Pagination links and `Location` headers are the parts almost every API uses. We implement it here so you understand the idea and its costs.
+
+### The format
+
+We use a small, HAL-style shape: a `_links` object whose keys are **link relations** (what the link means) and whose values say where to go. HAL has no `method`; we add it, because REST uses one URL with several methods.
+
+```json
+"_links": {
+  "self":   { "href": "/api/v1/users/1", "method": "GET" },
+  "update": { "href": "/api/v1/users/1", "method": "PATCH" }
+}
+```
+
+Relation names are a vocabulary the client relies on, so name them consistently: `self`, `collection`, `next`, `prev`, `first`, `last`, `create`, `update`, `replace`, `delete`.
+
+### 7.1 An entry point
+
+In `server.ts`, before the users router:
+
+```ts
+// The API entry point: a client only needs to know this one URL and can discover the rest from the links.
+app.get("/api/v1", (_req, res) => {
+  res.json({
+    _links: {
+      self: { href: "/api/v1", method: "GET" },
+      users: { href: "/api/v1/users", method: "GET" },
+      signup: { href: "/api/v1/users", method: "POST" },
+      health: { href: "/health", method: "GET" },
+    },
+  });
+});
+```
+
+`curl localhost:4000/api/v1` is now the "home page" of the API.
+
+### 7.2 Links on a single user
+
+In `users.ts`, one helper builds the links. It is **role-aware**: only admins are told about `replace`, `update` and `delete`.
+
+```ts
+type Link = { href: string; method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" };
+
+const withLinks = (baseUrl: string, role: string | undefined, user: User) => ({
+  ...user,
+  _links: {
+    self: { href: `${baseUrl}/${user.id}`, method: "GET" },
+    collection: { href: baseUrl, method: "GET" },
+    ...(role === "admin" && {
+      replace: { href: `${baseUrl}/${user.id}`, method: "PUT" },
+      update: { href: `${baseUrl}/${user.id}`, method: "PATCH" },
+      delete: { href: `${baseUrl}/${user.id}`, method: "DELETE" },
+    }),
+  } satisfies Record<string, Link>,
+});
+```
+
+Notes:
+- `...(condition && { ... })` adds keys only when the condition is true (spreading `false` adds nothing).
+- Use `baseUrl` (`req.baseUrl`), never a hardcoded `/api/v1`, so the links follow the mount path (Level 4 / stretch 1).
+- `res.locals.role` is set by `authenticate`. On the public `POST`, it is `undefined`, so the response only has `self` and `collection`.
+
+Use it everywhere a single user is returned (`POST`, `GET /:id`, `PUT`, `PATCH`):
+
+```ts
+res.json({ data: withLinks(req.baseUrl, res.locals.role, user) });
+```
+
+### 7.3 Links on the collection
+
+Each item gets its own links, and the list gets links for navigation. Refactor the pagination code from Level 2 so one function produces the page URL:
+
+```ts
+// URL of another page, keeping all other query params (search, sort, ...)
+const pageHref = (p: number) => {
+  const query = new URLSearchParams(req.query as Record<string, string>);
+  query.set("page", String(p));
+  return `${req.baseUrl}?${query}`;
+};
+
+// Same information twice: in the Link HEADER (standard HTTP) and in _links in the BODY (easy for JSON clients)
+const links: string[] = [];
+if (page > 1) links.push(`<${pageHref(page - 1)}>; rel="prev"`);
+if (page < totalPages) links.push(`<${pageHref(page + 1)}>; rel="next"`);
+if (links.length) res.set("Link", links.join(", "));
+
+res.json({
+  data: data.map((user) => withLinks(req.baseUrl, res.locals.role, user)),
+  meta: { page, limit, total, totalPages },
+  _links: {
+    self: { href: pageHref(page), method: "GET" },
+    first: { href: pageHref(1), method: "GET" },
+    last: { href: pageHref(Math.max(totalPages, 1)), method: "GET" },
+    ...(page > 1 && { prev: { href: pageHref(page - 1), method: "GET" } }),
+    ...(page < totalPages && { next: { href: pageHref(page + 1), method: "GET" } }),
+    create: { href: req.baseUrl, method: "POST" },
+  } satisfies Record<string, Link>,
+});
+```
+
+The last page has **no** `next` link and the first has **no** `prev`. A client loops with `while (body._links.next) { fetch(body._links.next.href) }` and never has to do page arithmetic.
+
+### 7.4 Links change the body, so tell caches
+
+The body of `GET /users/1` is now different for an admin and a normal user, but the URL is the same. Without a hint, a shared cache could hand the admin's body to a normal user. `Vary: Authorization` tells caches "this response depends on the `Authorization` request header":
+
+```ts
+res.set("Vary", "Authorization");
+```
+
+Add it to `GET /users` and `GET /users/:id`. The ETag is built from `id` + `updatedAt` and does not include links; that is fine because the cache already keys on `Authorization` through `Vary`.
+
+### 7.5 Test it
+
+```sh
+U='Authorization: Bearer user-secret-token'
+A='Authorization: Bearer admin-secret-token'
+
+curl -s localhost:4000/api/v1 | jq                      # the entry point
+curl -s localhost:4000/api/v1/users/1 -H "$U" | jq '.data._links'   # self, collection only
+curl -s localhost:4000/api/v1/users/1 -H "$A" | jq '.data._links'   # + replace, update, delete
+curl -s "localhost:4000/api/v1/users?limit=1" -H "$U" | jq '._links'   # first, last, next, create (no prev)
+curl -si localhost:4000/api/v1/users/1 -H "$U" | grep -i '^vary'
+```
+
+(`jq` pretty-prints JSON. If you do not have it, `python3 -m json.tool` works.)
+
+Then **follow the links without typing any URL**: take `_links.next.href` from one response and `curl` exactly that. Take `_links.delete.href` and `_links.delete.method` from an admin response and perform that call. That is the whole point.
+
+### 7.6 Pitfalls and discussion
+
+- **A hidden link is not security.** Not showing `delete` to a normal user is a usability feature. The server must still answer `403` if they call it (Level 5). Never rely on links for authorization.
+- **Do not lie.** If a link is in the response, following it should work for this caller in this state.
+- **Responses got bigger.** Links cost bytes on every item. Is that worth it for a list of 100 users? (Some APIs only add `self` per item.)
+- **Clients must be written for it.** A client that hardcodes `/api/v1/users/${id}` ignores your links and gets none of the benefit.
+- **`_links` is output only.** Sending it in a `PUT`/`PATCH` body is rejected by `.strict()`; check this.
+- **Thinking exercise (web app):** the Next.js pager builds `?page=2` URLs itself. The API links point to **API** URLs, not web URLs. How would you use `_links.next` there, and what would you have to translate?
+
+---
+
 ## Docker and web app changes
 
 The API now needs tokens, and the URLs changed. Every place that holds config must change together. Checklist:
@@ -1065,6 +1218,25 @@ type User = typeof users.$inferSelect;
 // The ETag changes whenever the row changes, because updatedAt changes.
 const etagOf = (user: User) => `"${user.id}-${user.updatedAt.getTime()}"`;
 
+// ---------- Hypermedia (HATEOAS) ----------
+// Every response tells the client what it can do next, so clients follow links instead of building URLs.
+// Links are role-aware: only an admin is told about update and delete.
+
+type Link = { href: string; method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" };
+
+const withLinks = (baseUrl: string, role: string | undefined, user: User) => ({
+  ...user,
+  _links: {
+    self: { href: `${baseUrl}/${user.id}`, method: "GET" },
+    collection: { href: baseUrl, method: "GET" },
+    ...(role === "admin" && {
+      replace: { href: `${baseUrl}/${user.id}`, method: "PUT" },
+      update: { href: `${baseUrl}/${user.id}`, method: "PATCH" },
+      delete: { href: `${baseUrl}/${user.id}`, method: "DELETE" },
+    }),
+  } satisfies Record<string, Link>,
+});
+
 const findUser = async (id: number) => (await db.select().from(users).where(eq(users.id, id)))[0];
 
 const userNotFound = { message: "User not found" };
@@ -1118,20 +1290,33 @@ usersRouter
     const [{ total }] = await db.select({ total: count() }).from(users).where(where);
     const totalPages = Math.ceil(total / limit);
 
-    // Link header: URLs of the neighbouring pages, keeping all other query params
-    const pageUrl = (p: number, rel: string) => {
+    // URL of another page, keeping all other query params (search, sort, ...)
+    const pageHref = (p: number) => {
       const query = new URLSearchParams(req.query as Record<string, string>);
       query.set("page", String(p));
-      return `<${req.baseUrl}?${query}>; rel="${rel}"`;
+      return `${req.baseUrl}?${query}`;
     };
-    const links = [];
-    if (page > 1) links.push(pageUrl(page - 1, "prev"));
-    if (page < totalPages) links.push(pageUrl(page + 1, "next"));
+
+    // Same information twice: in the Link HEADER (standard HTTP) and in _links in the BODY (easy for JSON clients)
+    const links: string[] = [];
+    if (page > 1) links.push(`<${pageHref(page - 1)}>; rel="prev"`);
+    if (page < totalPages) links.push(`<${pageHref(page + 1)}>; rel="next"`);
 
     res.set("X-Total-Count", String(total));
     if (links.length) res.set("Link", links.join(", "));
-    res.set("Cache-Control", "private, no-cache");
-    res.json({ data, meta: { page, limit, total, totalPages } });
+    res.set("Cache-Control", "private, no-cache").set("Vary", "Authorization");
+    res.json({
+      data: data.map((user) => withLinks(req.baseUrl, res.locals.role, user)),
+      meta: { page, limit, total, totalPages },
+      _links: {
+        self: { href: pageHref(page), method: "GET" },
+        first: { href: pageHref(1), method: "GET" },
+        last: { href: pageHref(Math.max(totalPages, 1)), method: "GET" },
+        ...(page > 1 && { prev: { href: pageHref(page - 1), method: "GET" } }),
+        ...(page < totalPages && { next: { href: pageHref(page + 1), method: "GET" } }),
+        create: { href: req.baseUrl, method: "POST" },
+      } satisfies Record<string, Link>,
+    });
   })
 
   // POST /users (public: this is "sign up")
@@ -1151,7 +1336,7 @@ usersRouter
       .set("Location", `${req.baseUrl}/${user.id}`)
       .set("ETag", etagOf(user))
       .set("Cache-Control", "no-store")
-      .json({ data: user });
+      .json({ data: withLinks(req.baseUrl, res.locals.role, user) });
   })
 
   .all(methodNotAllowed("GET, POST"));
@@ -1167,7 +1352,11 @@ usersRouter
     }
 
     // Because we set an ETag, Express answers 304 on its own when If-None-Match matches.
-    res.set("ETag", etagOf(user)).set("Cache-Control", "private, no-cache").json({ data: user });
+    res
+      .set("ETag", etagOf(user))
+      .set("Cache-Control", "private, no-cache")
+      .set("Vary", "Authorization") // the body differs per role (admins get more links)
+      .json({ data: withLinks(req.baseUrl, res.locals.role, user) });
   })
 
   // PUT /users/:id (replace: every field required; optional bio becomes null)
@@ -1193,7 +1382,7 @@ usersRouter
     }
 
     const [user] = await db.update(users).set({ ...input, bio: input.bio ?? null }).where(eq(users.id, id)).returning();
-    res.set("ETag", etagOf(user)).set("Cache-Control", "no-store").json({ data: user });
+    res.set("ETag", etagOf(user)).set("Cache-Control", "no-store").json({ data: withLinks(req.baseUrl, res.locals.role, user) });
   })
 
   // PATCH /users/:id (partial: only the fields that were sent)
@@ -1221,7 +1410,7 @@ usersRouter
     }
 
     const [user] = await db.update(users).set(input).where(eq(users.id, id)).returning();
-    res.set("ETag", etagOf(user)).set("Cache-Control", "no-store").json({ data: user });
+    res.set("ETag", etagOf(user)).set("Cache-Control", "no-store").json({ data: withLinks(req.baseUrl, res.locals.role, user) });
   })
 
   // DELETE /users/:id
@@ -1294,6 +1483,18 @@ app.use(express.json({ limit: "100kb" })); // bigger bodies fail with 413
 // ---------- Routes (add new resources here) ----------
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
+});
+
+// The API entry point: a client only needs to know this one URL and can discover the rest from the links.
+app.get("/api/v1", (_req, res) => {
+  res.json({
+    _links: {
+      self: { href: "/api/v1", method: "GET" },
+      users: { href: "/api/v1/users", method: "GET" },
+      signup: { href: "/api/v1/users", method: "POST" },
+      health: { href: "/health", method: "GET" },
+    },
+  });
 });
 
 app.use("/api/v1/users", usersRouter);
