@@ -7,7 +7,7 @@ This folder has three guides. Do them **in order**. Each one ends with a checkli
 | 1 | [01-dockerize-express.md](01-dockerize-express.md) | Write a Dockerfile, build an image, run a container |
 | 2 | [02-dockerize-nextjs.md](02-dockerize-nextjs.md) | Multi-stage builds, build-time vs run-time config |
 | 3 | [03-docker-compose.md](03-docker-compose.md) | Run web + api + db together with Docker Compose |
-| 4 | [04-rest-api-task.md](04-rest-api-task.md) (+ [implementation guide](04-rest-api-implementation.md)) | Turn the users endpoints into a real REST API: CRUD, status codes, ETag, versioning, auth, HATEOAS |
+| 4 | [04-rest-api-task.md](04-rest-api-task.md) (+ [implementation guide](04-rest-api-implementation.md)) | Turn the users endpoints into a real REST API: CRUD, status codes, ETag, versioning, auth, HATEOAS, OpenAPI docs |
 
 ## The project
 

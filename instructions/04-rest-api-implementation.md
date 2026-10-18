@@ -2,7 +2,7 @@
 
 This is the "how" for [04-rest-api-task.md](04-rest-api-task.md). **Try each level yourself first.** Open this guide when you are stuck, read only the part for that level, then close it and write the code again in your own words.
 
-The code for Levels 1 to 7 and the reference files at the bottom were run against a real database with the `curl` commands from the task. The stretch goals are outlines with hints, not finished code. But the goal is not to copy: for every line you must be able to say what it does and what breaks if you remove it.
+The code for Levels 1 to 8 and the reference files at the bottom were run against a real database with the `curl` commands from the task. The stretch goals are outlines with hints, not finished code. But the goal is not to copy: for every line you must be able to say what it does and what breaks if you remove it.
 
 ## Contents
 
@@ -14,6 +14,7 @@ The code for Levels 1 to 7 and the reference files at the bottom were run agains
 - [Level 5: Authentication and authorization](#level-5-authentication-and-authorization)
 - [Level 6: Hardening](#level-6-hardening)
 - [Level 7: Hypermedia (HATEOAS)](#level-7-hypermedia-hateoas)
+- [Level 8: API documentation (OpenAPI and Swagger UI)](#level-8-api-documentation-openapi-and-swagger-ui)
 - [Docker and web app changes](#docker-and-web-app-changes)
 - [Stretch goals in detail](#stretch-goals-in-detail)
 - [Complete reference files](#complete-reference-files)
@@ -30,6 +31,7 @@ The code for Levels 1 to 7 and the reference files at the bottom were run agains
 | `api/src/env.ts` | the two new token variables |
 | `api/src/db/schema.ts` | `updated_at` column |
 | `api/drizzle/` | the generated migration |
+| `api/openapi.yaml` (new, Level 8) | the API description served at `/docs` |
 
 Install the one new dependency:
 
@@ -819,6 +821,276 @@ Then **follow the links without typing any URL**: take `_links.next.href` from o
 
 ---
 
+## Level 8: API documentation (OpenAPI and Swagger UI)
+
+> Goal: a machine-readable description of your API (`api/openapi.yaml`) and a web page (`/docs`) where anyone can read the endpoints and try them.
+
+**Why.** Documentation that lives outside the code goes stale. An OpenAPI file can be linted, used to generate client code, and used for contract tests. Swagger UI turns it into a page where a frontend developer can click *Try it out* without reading your code.
+
+### 8.1 Write `api/openapi.yaml`
+
+Below is a **complete, validated example for the two `GET` endpoints**. Read it top to bottom, then do the same for `POST`, `PUT`, `PATCH` and `DELETE` yourself.
+
+The file has three parts:
+- `components`: pieces you define **once** (the `User` shape, the `Error` shape, the bearer-token scheme, shared `401`/`400` responses).
+- `paths`: one entry per URL and method.
+- Everywhere else you point at a component with `$ref: "#/components/..."` instead of copying it.
+
+```yaml
+openapi: 3.0.3
+info:
+  title: Users API
+  version: 1.0.0
+  description: "Practice API. Authenticate with `Authorization: Bearer <token>`."
+servers:
+  - url: http://localhost:4000/api/v1
+
+# Reusable pieces: define once here, point to them with $ref below.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  schemas:
+    Link:
+      type: object
+      required: [href, method]
+      properties:
+        href: { type: string, example: /api/v1/users/1 }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE] }
+
+    User:
+      type: object
+      required: [id, name, email, createdAt, updatedAt]
+      properties:
+        id: { type: integer, example: 1 }
+        name: { type: string, example: Ada Lovelace }
+        email: { type: string, format: email, example: ada@example.com }
+        bio: { type: string, nullable: true, example: First programmer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        _links:
+          type: object
+          description: Actions available to the caller. Admins also get replace, update and delete.
+          additionalProperties: { $ref: "#/components/schemas/Link" }
+
+    PageMeta:
+      type: object
+      properties:
+        page: { type: integer, example: 1 }
+        limit: { type: integer, example: 10 }
+        total: { type: integer, example: 42 }
+        totalPages: { type: integer, example: 5 }
+
+    UserList:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/User" }
+        meta: { $ref: "#/components/schemas/PageMeta" }
+        _links:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/Link" }
+
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string, example: Validation failed }
+        errors:
+          type: object
+          description: Field name to list of messages
+          additionalProperties:
+            type: array
+            items: { type: string }
+          example: { sort: ["Invalid option"] }
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid token
+      headers:
+        WWW-Authenticate: { schema: { type: string, example: Bearer } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { message: Authentication required }
+    BadRequest:
+      description: Validation failed
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+paths:
+  /users:
+    get:
+      summary: List users
+      description: Paginated, filterable and sortable list. Requires any valid token.
+      operationId: listUsers
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+        - name: search
+          in: query
+          description: Case-insensitive match on name or email
+          schema: { type: string, maxLength: 100 }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [id, name, email, createdAt], default: id }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - name: createdAfter
+          in: query
+          description: ISO date. Only users created after it.
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: A page of users
+          headers:
+            X-Total-Count:
+              description: Total number of users matching the filters
+              schema: { type: integer }
+            Link:
+              description: URLs of the neighbouring pages (rel="next", rel="prev")
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, example: "private, no-cache" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserList" }
+              example:
+                data:
+                  - id: 1
+                    name: Ada Lovelace
+                    email: ada@example.com
+                    bio: null
+                    createdAt: "2026-10-06T10:00:00.000Z"
+                    updatedAt: "2026-10-06T10:00:00.000Z"
+                    _links:
+                      self: { href: /api/v1/users/1, method: GET }
+                      collection: { href: /api/v1/users, method: GET }
+                meta: { page: 1, limit: 10, total: 1, totalPages: 1 }
+                _links:
+                  self: { href: "/api/v1/users?page=1", method: GET }
+                  first: { href: "/api/v1/users?page=1", method: GET }
+                  last: { href: "/api/v1/users?page=1", method: GET }
+                  create: { href: /api/v1/users, method: POST }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "406":
+          description: Client asked for something other than JSON
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /users/{id}:
+    get:
+      summary: Get one user
+      operationId: getUser
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }
+        - name: If-None-Match
+          in: header
+          description: ETag from an earlier response. If it still matches, the server answers 304 with no body.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The user
+          headers:
+            ETag:
+              description: Version of this user (id + updatedAt). Send it back in If-Match when updating.
+              schema: { type: string, example: '"1-1759744800000"' }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/User" }
+        "304": { description: Not modified. Your cached copy is still current. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { message: User not found }
+```
+
+Things to notice:
+- `security: - bearerAuth: []` on an operation puts the padlock on it in Swagger UI. Leave it off for public endpoints (`POST /users`, `/health`).
+- **Response headers** (`X-Total-Count`, `Link`, `ETag`, `WWW-Authenticate`) are documented under `headers`. Clients cannot discover them any other way.
+- Every status code the endpoint can return has an entry, including `304`, `401` and `406`.
+- `examples` are what Swagger UI shows as the sample response, so use realistic values.
+- YAML gotcha: a plain value containing `: ` (colon and space) breaks parsing, which is why the `description` on line 5 is quoted.
+- `redocly lint` prints two warnings for this file (the `localhost` server URL and a missing license). Both are fine here.
+
+### 8.2 Serve it at `/docs`
+
+Install the packages (the first two are runtime dependencies, so they must be in `dependencies`, not `devDependencies`):
+
+```sh
+cd api
+npm install swagger-ui-express yaml
+npm install -D @types/swagger-ui-express
+```
+
+In `server.ts`, before the API routes:
+
+```ts
+import { readFileSync } from "node:fs";
+import swaggerUi from "swagger-ui-express";
+import { parse } from "yaml";
+
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(parse(readFileSync("openapi.yaml", "utf8"))));
+```
+
+`readFileSync("openapi.yaml")` is relative to the folder the server is **started from**. `npm run dev` runs inside `api/`, and in Docker the working directory is `/app`, so the file must be at `/app/openapi.yaml` (see 8.4).
+
+### 8.3 Validate it
+
+```sh
+npx @redocly/cli lint api/openapi.yaml
+```
+
+Fix every *error*. The two *warnings* shown for the example file are acceptable.
+
+Then open http://localhost:4000/docs. Click **Authorize**, paste `user-secret-token`, open `GET /users` and press **Try it out** then **Execute**. Do the same with an admin token on `DELETE`, and with the wrong token to see the `403`.
+
+### 8.4 Docker
+
+The final image only contains `dist/`, `node_modules` and `package.json`, so the YAML file is missing at runtime and the server crashes at startup:
+
+```
+Error: ENOENT: no such file or directory, open 'openapi.yaml'
+```
+
+Add one line to the `runner` stage of `api/Dockerfile`:
+
+```dockerfile
+COPY openapi.yaml ./
+```
+
+and rebuild: `docker compose up -d --build api`. Also make sure `openapi.yaml` is not listed in `api/.dockerignore`.
+
+### 8.5 Pitfalls and discussion
+
+- Helmet's strict Content-Security-Policy applies to `/docs` too. `swagger-ui-express` serves its own script files, so it works with the defaults. If you load Swagger UI assets from a CDN instead, the browser console shows CSP errors and the page stays blank. If you ever relax the policy, do it for `/docs` only and know what you are weakening.
+- **Keep the file honest.** A spec that disagrees with the code is worse than none. Change an endpoint, change the YAML in the same commit.
+- Document **every** status code from your Level 1 table, and the response **headers** (`Location`, `ETag`, `Link`, `X-Total-Count`, `Retry-After`).
+- Mark public endpoints (`POST /users`, `/health`) by leaving out `security`. Mark role limits (admin only) in the `description`, since OpenAPI has no built-in "role" concept for bearer tokens.
+- Should `/docs` be public in production? Think about what it reveals.
+
+---
+
 ## Docker and web app changes
 
 The API now needs tokens, and the URLs changed. Every place that holds config must change together. Checklist:
@@ -886,7 +1158,9 @@ const res = await fetch(`${env.apiUrl}/users?${qs}`, {
 });
 ```
 
-**7. Rebuild everything**
+**7. If you did Level 8:** add `COPY openapi.yaml ./` to the `runner` stage of `api/Dockerfile` (see [8.4](#84-docker)).
+
+**8. Rebuild everything**
 
 ```sh
 docker compose down
@@ -1046,234 +1320,7 @@ Read the response: `Access-Control-Allow-Origin`, `-Methods`, `-Headers`. Then c
 
 **Test.** `?fields=id,name` returns only those two keys; `?fields=password` returns `400`; `?fields=` (empty) should not crash.
 
-### Stretch 6: OpenAPI document and Swagger UI
-
-**Goal.** A machine-readable description of your API (`api/openapi.yaml`) plus a web page (`/docs`) where anyone can read and try the endpoints.
-
-**Why.** Documentation that lives outside the code goes stale. An OpenAPI file can be linted, used to generate client code and used for contract tests.
-
-**Plan.**
-1. Write `api/openapi.yaml`. Below is a **complete, validated example for the two `GET` endpoints**. Read it top to bottom, then do the same for `POST`, `PUT`, `PATCH` and `DELETE` yourself.
-
-   The file has three parts:
-   - `components`: pieces you define **once** (the `User` shape, the `Error` shape, the bearer-token scheme, shared `401`/`400` responses).
-   - `paths`: one entry per URL and method.
-   - Everywhere else you point at a component with `$ref: "#/components/..."` instead of copying it.
-
-   ```yaml
-   openapi: 3.0.3
-   info:
-     title: Users API
-     version: 1.0.0
-     description: "Practice API. Authenticate with `Authorization: Bearer <token>`."
-   servers:
-     - url: http://localhost:4000/api/v1
-
-   # Reusable pieces: define once here, point to them with $ref below.
-   components:
-     securitySchemes:
-       bearerAuth:
-         type: http
-         scheme: bearer
-
-     schemas:
-       Link:
-         type: object
-         required: [href, method]
-         properties:
-           href: { type: string, example: /api/v1/users/1 }
-           method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE] }
-
-       User:
-         type: object
-         required: [id, name, email, createdAt, updatedAt]
-         properties:
-           id: { type: integer, example: 1 }
-           name: { type: string, example: Ada Lovelace }
-           email: { type: string, format: email, example: ada@example.com }
-           bio: { type: string, nullable: true, example: First programmer }
-           createdAt: { type: string, format: date-time }
-           updatedAt: { type: string, format: date-time }
-           _links:
-             type: object
-             description: Actions available to the caller. Admins also get replace, update and delete.
-             additionalProperties: { $ref: "#/components/schemas/Link" }
-
-       PageMeta:
-         type: object
-         properties:
-           page: { type: integer, example: 1 }
-           limit: { type: integer, example: 10 }
-           total: { type: integer, example: 42 }
-           totalPages: { type: integer, example: 5 }
-
-       UserList:
-         type: object
-         properties:
-           data:
-             type: array
-             items: { $ref: "#/components/schemas/User" }
-           meta: { $ref: "#/components/schemas/PageMeta" }
-           _links:
-             type: object
-             additionalProperties: { $ref: "#/components/schemas/Link" }
-
-       Error:
-         type: object
-         required: [message]
-         properties:
-           message: { type: string, example: Validation failed }
-           errors:
-             type: object
-             description: Field name to list of messages
-             additionalProperties:
-               type: array
-               items: { type: string }
-             example: { sort: ["Invalid option"] }
-
-     responses:
-       Unauthorized:
-         description: Missing or invalid token
-         headers:
-           WWW-Authenticate: { schema: { type: string, example: Bearer } }
-         content:
-           application/json:
-             schema: { $ref: "#/components/schemas/Error" }
-             example: { message: Authentication required }
-       BadRequest:
-         description: Validation failed
-         content:
-           application/json:
-             schema: { $ref: "#/components/schemas/Error" }
-
-   paths:
-     /users:
-       get:
-         summary: List users
-         description: Paginated, filterable and sortable list. Requires any valid token.
-         operationId: listUsers
-         tags: [Users]
-         security:
-           - bearerAuth: []
-         parameters:
-           - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
-           - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
-           - name: search
-             in: query
-             description: Case-insensitive match on name or email
-             schema: { type: string, maxLength: 100 }
-           - name: sort
-             in: query
-             schema: { type: string, enum: [id, name, email, createdAt], default: id }
-           - name: order
-             in: query
-             schema: { type: string, enum: [asc, desc], default: desc }
-           - name: createdAfter
-             in: query
-             description: ISO date. Only users created after it.
-             schema: { type: string, format: date-time }
-         responses:
-           "200":
-             description: A page of users
-             headers:
-               X-Total-Count:
-                 description: Total number of users matching the filters
-                 schema: { type: integer }
-               Link:
-                 description: URLs of the neighbouring pages (rel="next", rel="prev")
-                 schema: { type: string }
-               Cache-Control:
-                 schema: { type: string, example: "private, no-cache" }
-             content:
-               application/json:
-                 schema: { $ref: "#/components/schemas/UserList" }
-                 example:
-                   data:
-                     - id: 1
-                       name: Ada Lovelace
-                       email: ada@example.com
-                       bio: null
-                       createdAt: "2026-10-06T10:00:00.000Z"
-                       updatedAt: "2026-10-06T10:00:00.000Z"
-                       _links:
-                         self: { href: /api/v1/users/1, method: GET }
-                         collection: { href: /api/v1/users, method: GET }
-                   meta: { page: 1, limit: 10, total: 1, totalPages: 1 }
-                   _links:
-                     self: { href: "/api/v1/users?page=1", method: GET }
-                     first: { href: "/api/v1/users?page=1", method: GET }
-                     last: { href: "/api/v1/users?page=1", method: GET }
-                     create: { href: /api/v1/users, method: POST }
-           "400": { $ref: "#/components/responses/BadRequest" }
-           "401": { $ref: "#/components/responses/Unauthorized" }
-           "406":
-             description: Client asked for something other than JSON
-             content:
-               application/json:
-                 schema: { $ref: "#/components/schemas/Error" }
-
-     /users/{id}:
-       get:
-         summary: Get one user
-         operationId: getUser
-         tags: [Users]
-         security:
-           - bearerAuth: []
-         parameters:
-           - { name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }
-           - name: If-None-Match
-             in: header
-             description: ETag from an earlier response. If it still matches, the server answers 304 with no body.
-             schema: { type: string }
-         responses:
-           "200":
-             description: The user
-             headers:
-               ETag:
-                 description: Version of this user (id + updatedAt). Send it back in If-Match when updating.
-                 schema: { type: string, example: '"1-1759744800000"' }
-             content:
-               application/json:
-                 schema:
-                   type: object
-                   properties:
-                     data: { $ref: "#/components/schemas/User" }
-           "304": { description: Not modified. Your cached copy is still current. }
-           "400": { $ref: "#/components/responses/BadRequest" }
-           "401": { $ref: "#/components/responses/Unauthorized" }
-           "404":
-             description: User not found
-             content:
-               application/json:
-                 schema: { $ref: "#/components/schemas/Error" }
-                 example: { message: User not found }
-   ```
-
-   Things to notice:
-   - `security: - bearerAuth: []` on an operation puts the padlock on it in Swagger UI. Leave it off for public endpoints (`POST /users`, `/health`).
-   - **Response headers** (`X-Total-Count`, `Link`, `ETag`, `WWW-Authenticate`) are documented under `headers`. Clients cannot discover them any other way.
-   - Every status code the endpoint can return has an entry, including `304`, `401` and `406`.
-   - `examples` are what Swagger UI shows as the sample response, so use realistic values.
-   - YAML gotcha: a plain value containing `: ` (colon and space) breaks parsing, which is why the `description` on line 5 is quoted.
-   - `redocly lint` prints two warnings for this file (the `localhost` server URL and a missing license). Both are fine here.
-
-2. Serve it. Install `swagger-ui-express` and `yaml`:
-   ```ts
-   import swaggerUi from "swagger-ui-express";
-   import { parse } from "yaml";
-   import { readFileSync } from "node:fs";
-
-   app.use("/docs", swaggerUi.serve, swaggerUi.setup(parse(readFileSync("openapi.yaml", "utf8"))));
-   ```
-3. Validate the file: `npx @redocly/cli lint api/openapi.yaml`.
-
-**Pitfalls.**
-- **Docker:** the Dockerfile copies only `dist/` and `node_modules` into the final image. Your YAML will be missing at runtime; `readFileSync` throws. You need to `COPY openapi.yaml` into the `runner` stage. Helmet's strict Content-Security-Policy applies to `/docs` too. `swagger-ui-express` serves its own script files, so it works with the defaults, but if you load Swagger UI assets from a CDN instead, the browser console will show CSP errors and the page stays blank. If you relax the policy, do it for `/docs` only and know what you are weakening.
-- Keep the file honest: change an endpoint, change the YAML.
-
-**Test.** Open http://localhost:4000/docs, click *Authorize*, paste a token, and execute `GET /users`.
-
-### Stretch 7: Automated tests (Vitest + Supertest)
+### Stretch 6: Automated tests (Vitest + Supertest)
 
 **Goal.** A test suite that checks every row of the status-code table and runs with one command.
 

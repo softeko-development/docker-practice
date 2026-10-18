@@ -1,6 +1,6 @@
 # Task 4: Make the Users API a Real REST API
 
-Goal: take the existing `users` endpoints and make them follow REST conventions properly: all the HTTP methods, correct status codes, validation, caching with ETag, versioning, simple authentication and authorization, and hypermedia links (HATEOAS).
+Goal: take the existing `users` endpoints and make them follow REST conventions properly: all the HTTP methods, correct status codes, validation, caching with ETag, versioning, simple authentication and authorization, hypermedia links (HATEOAS) and API documentation (OpenAPI).
 
 You will work on the **users resource that already exists**. No new resource. Everything stays in:
 
@@ -238,6 +238,34 @@ Think about:
 
 ---
 
+## Level 8: API documentation (OpenAPI and Swagger UI)
+
+> How to: [implementation guide, Level 8](04-rest-api-implementation.md#level-8-api-documentation-openapi-and-swagger-ui)
+
+A frontend developer should be able to learn your API without reading your code. Describe it in an OpenAPI file and publish it as a page.
+
+Requirements:
+
+1. Create `api/openapi.yaml` (OpenAPI 3). The implementation guide shows a complete example for the two `GET` endpoints; use it as your template and **document the rest yourself**: `POST /users`, `PUT`, `PATCH` and `DELETE /users/{id}`, and `GET /api/v1` and `GET /health`.
+2. For every endpoint document: summary, parameters (path, query, **and the headers** such as `If-Match`), request body, and **every status code** from your Level 1 table with its response body.
+3. Document the response **headers** your API sends (`Location`, `ETag`, `Link`, `X-Total-Count`, `WWW-Authenticate`, `Retry-After`).
+4. Declare the bearer-token security scheme. Protected endpoints use it; public ones (`POST /users`, `/health`, `GET /api/v1`) do not. Say in each `description` which role is needed.
+5. Define the `User`, `Error` and link shapes **once** under `components` and reuse them with `$ref`. No copy-pasted schemas.
+6. Serve it with Swagger UI at `http://localhost:4000/docs`.
+7. `npx @redocly/cli lint api/openapi.yaml` reports no errors.
+8. It works in Docker: `docker compose up --build`, then open `/docs`. (Hint: the server crashes on startup if the file is not in the image. Find out why.)
+
+Prove it:
+- In Swagger UI, click **Authorize**, enter the user token, and run `GET /users`.
+- Run an admin-only call with the user token and see the `403`; then use the admin token.
+- Run a `PATCH` with no `If-Match` and see the `428` your spec says it returns.
+
+Think about:
+- What happens to a spec when the code changes and nobody updates it? How could you catch that automatically?
+- Should `/docs` be public in production?
+
+---
+
 ## Stretch goals
 
 Do these only after everything above works. Each one is explained in detail (goal, why, plan, hints, tests, pitfalls) in the [implementation guide](04-rest-api-implementation.md#stretch-goals-in-detail).
@@ -249,8 +277,7 @@ Do these only after everything above works. Each one is explained in detail (goa
 | 3 | **`Idempotency-Key`** on `POST /users` | making a non-idempotent method safe to retry |
 | 4 | **`HEAD` and `OPTIONS`**, CORS preflight | what browsers send before your real request |
 | 5 | **Field selection** `?fields=id,name` | whitelisting, dynamic selects, caching effects |
-| 6 | **OpenAPI** file + Swagger UI at `/docs` | documentation as code, contract-first thinking |
-| 7 | **Automated tests** with Vitest + Supertest | proving every status code, test databases |
+| 6 | **Automated tests** with Vitest + Supertest | proving every status code, test databases |
 
 ---
 
@@ -311,6 +338,7 @@ curl -i localhost:4000/api/users                                      # your ver
 - [ ] Tokens compared in constant time; the web token is server-only (no `NEXT_PUBLIC_`)
 - [ ] Rate limit with `429` + `Retry-After`
 - [ ] `GET /api/v1` entry point; `_links` on users and on the list; admin-only action links; `Vary: Authorization`
+- [ ] `api/openapi.yaml` documents every endpoint, status code and header; Swagger UI at `/docs`; lint passes; works in Docker
 - [ ] One consistent error shape; malformed JSON returns `400`; no internals leaked
 - [ ] `docker compose up --build` from a clean state still gives a working app
 
@@ -328,3 +356,4 @@ curl -i localhost:4000/api/users                                      # your ver
 10. What would you split out of `users.ts` first if it grew to 800 lines?
 11. What is HATEOAS, and what does a client gain and lose when it follows links instead of building URLs?
 12. Why is hiding the `delete` link not an authorization mechanism?
+13. Why document response headers and status codes, not just the happy-path body? How would you stop the spec from going stale?
