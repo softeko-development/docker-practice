@@ -1053,49 +1053,210 @@ Read the response: `Access-Control-Allow-Origin`, `-Methods`, `-Headers`. Then c
 **Why.** Documentation that lives outside the code goes stale. An OpenAPI file can be linted, used to generate client code and used for contract tests.
 
 **Plan.**
-1. Write `api/openapi.yaml`. Skeleton:
+1. Write `api/openapi.yaml`. Below is a **complete, validated example for the two `GET` endpoints**. Read it top to bottom, then do the same for `POST`, `PUT`, `PATCH` and `DELETE` yourself.
+
+   The file has three parts:
+   - `components`: pieces you define **once** (the `User` shape, the `Error` shape, the bearer-token scheme, shared `401`/`400` responses).
+   - `paths`: one entry per URL and method.
+   - Everywhere else you point at a component with `$ref: "#/components/..."` instead of copying it.
+
    ```yaml
    openapi: 3.0.3
-   info: { title: Users API, version: 1.0.0 }
-   servers: [{ url: http://localhost:4000/api/v1 }]
+   info:
+     title: Users API
+     version: 1.0.0
+     description: "Practice API. Authenticate with `Authorization: Bearer <token>`."
+   servers:
+     - url: http://localhost:4000/api/v1
+
+   # Reusable pieces: define once here, point to them with $ref below.
    components:
      securitySchemes:
-       bearerAuth: { type: http, scheme: bearer }
+       bearerAuth:
+         type: http
+         scheme: bearer
+
      schemas:
+       Link:
+         type: object
+         required: [href, method]
+         properties:
+           href: { type: string, example: /api/v1/users/1 }
+           method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE] }
+
        User:
          type: object
+         required: [id, name, email, createdAt, updatedAt]
          properties:
-           id: { type: integer }
-           name: { type: string }
-           email: { type: string, format: email }
-           bio: { type: string, nullable: true }
+           id: { type: integer, example: 1 }
+           name: { type: string, example: Ada Lovelace }
+           email: { type: string, format: email, example: ada@example.com }
+           bio: { type: string, nullable: true, example: First programmer }
            createdAt: { type: string, format: date-time }
            updatedAt: { type: string, format: date-time }
-       Error:
+           _links:
+             type: object
+             description: Actions available to the caller. Admins also get replace, update and delete.
+             additionalProperties: { $ref: "#/components/schemas/Link" }
+
+       PageMeta:
          type: object
          properties:
-           message: { type: string }
-           errors: { type: object, additionalProperties: { type: array, items: { type: string } } }
+           page: { type: integer, example: 1 }
+           limit: { type: integer, example: 10 }
+           total: { type: integer, example: 42 }
+           totalPages: { type: integer, example: 5 }
+
+       UserList:
+         type: object
+         properties:
+           data:
+             type: array
+             items: { $ref: "#/components/schemas/User" }
+           meta: { $ref: "#/components/schemas/PageMeta" }
+           _links:
+             type: object
+             additionalProperties: { $ref: "#/components/schemas/Link" }
+
+       Error:
+         type: object
+         required: [message]
+         properties:
+           message: { type: string, example: Validation failed }
+           errors:
+             type: object
+             description: Field name to list of messages
+             additionalProperties:
+               type: array
+               items: { type: string }
+             example: { sort: ["Invalid option"] }
+
+     responses:
+       Unauthorized:
+         description: Missing or invalid token
+         headers:
+           WWW-Authenticate: { schema: { type: string, example: Bearer } }
+         content:
+           application/json:
+             schema: { $ref: "#/components/schemas/Error" }
+             example: { message: Authentication required }
+       BadRequest:
+         description: Validation failed
+         content:
+           application/json:
+             schema: { $ref: "#/components/schemas/Error" }
+
    paths:
+     /users:
+       get:
+         summary: List users
+         description: Paginated, filterable and sortable list. Requires any valid token.
+         operationId: listUsers
+         tags: [Users]
+         security:
+           - bearerAuth: []
+         parameters:
+           - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+           - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+           - name: search
+             in: query
+             description: Case-insensitive match on name or email
+             schema: { type: string, maxLength: 100 }
+           - name: sort
+             in: query
+             schema: { type: string, enum: [id, name, email, createdAt], default: id }
+           - name: order
+             in: query
+             schema: { type: string, enum: [asc, desc], default: desc }
+           - name: createdAfter
+             in: query
+             description: ISO date. Only users created after it.
+             schema: { type: string, format: date-time }
+         responses:
+           "200":
+             description: A page of users
+             headers:
+               X-Total-Count:
+                 description: Total number of users matching the filters
+                 schema: { type: integer }
+               Link:
+                 description: URLs of the neighbouring pages (rel="next", rel="prev")
+                 schema: { type: string }
+               Cache-Control:
+                 schema: { type: string, example: "private, no-cache" }
+             content:
+               application/json:
+                 schema: { $ref: "#/components/schemas/UserList" }
+                 example:
+                   data:
+                     - id: 1
+                       name: Ada Lovelace
+                       email: ada@example.com
+                       bio: null
+                       createdAt: "2026-10-06T10:00:00.000Z"
+                       updatedAt: "2026-10-06T10:00:00.000Z"
+                       _links:
+                         self: { href: /api/v1/users/1, method: GET }
+                         collection: { href: /api/v1/users, method: GET }
+                   meta: { page: 1, limit: 10, total: 1, totalPages: 1 }
+                   _links:
+                     self: { href: "/api/v1/users?page=1", method: GET }
+                     first: { href: "/api/v1/users?page=1", method: GET }
+                     last: { href: "/api/v1/users?page=1", method: GET }
+                     create: { href: /api/v1/users, method: POST }
+           "400": { $ref: "#/components/responses/BadRequest" }
+           "401": { $ref: "#/components/responses/Unauthorized" }
+           "406":
+             description: Client asked for something other than JSON
+             content:
+               application/json:
+                 schema: { $ref: "#/components/schemas/Error" }
+
      /users/{id}:
        get:
-         security: [{ bearerAuth: [] }]
+         summary: Get one user
+         operationId: getUser
+         tags: [Users]
+         security:
+           - bearerAuth: []
          parameters:
            - { name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }
+           - name: If-None-Match
+             in: header
+             description: ETag from an earlier response. If it still matches, the server answers 304 with no body.
+             schema: { type: string }
          responses:
            "200":
              description: The user
              headers:
-               ETag: { schema: { type: string } }
+               ETag:
+                 description: Version of this user (id + updatedAt). Send it back in If-Match when updating.
+                 schema: { type: string, example: '"1-1759744800000"' }
              content:
                application/json:
                  schema:
                    type: object
-                   properties: { data: { $ref: "#/components/schemas/User" } }
-           "401": { description: Missing or invalid token }
-           "404": { description: User not found }
+                   properties:
+                     data: { $ref: "#/components/schemas/User" }
+           "304": { description: Not modified. Your cached copy is still current. }
+           "400": { $ref: "#/components/responses/BadRequest" }
+           "401": { $ref: "#/components/responses/Unauthorized" }
+           "404":
+             description: User not found
+             content:
+               application/json:
+                 schema: { $ref: "#/components/schemas/Error" }
+                 example: { message: User not found }
    ```
-   Describe **every** endpoint, **every** status code from your table, and the headers (`Location`, `ETag`, `If-Match`, `Link`).
+
+   Things to notice:
+   - `security: - bearerAuth: []` on an operation puts the padlock on it in Swagger UI. Leave it off for public endpoints (`POST /users`, `/health`).
+   - **Response headers** (`X-Total-Count`, `Link`, `ETag`, `WWW-Authenticate`) are documented under `headers`. Clients cannot discover them any other way.
+   - Every status code the endpoint can return has an entry, including `304`, `401` and `406`.
+   - `examples` are what Swagger UI shows as the sample response, so use realistic values.
+   - YAML gotcha: a plain value containing `: ` (colon and space) breaks parsing, which is why the `description` on line 5 is quoted.
+   - `redocly lint` prints two warnings for this file (the `localhost` server URL and a missing license). Both are fine here.
+
 2. Serve it. Install `swagger-ui-express` and `yaml`:
    ```ts
    import swaggerUi from "swagger-ui-express";
