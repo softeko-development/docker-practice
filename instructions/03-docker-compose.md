@@ -26,7 +26,7 @@ POSTGRES_PASSWORD=change-me
 POSTGRES_DB=practice
 ```
 
-Then copy it: `cp .env.example .env` and edit `.env`. `.env` must never be committed.
+The repo already contains a root `.env` with the same three variables, so you can skip creating it. Open it and check the values. (In a real project `.env` holds real secrets and is never committed; here it is committed on purpose because the values are throwaway.)
 
 ## Step 1: The database
 
@@ -108,7 +108,7 @@ Run it:
 docker compose run --rm migrate
 ```
 
-Expected output: `Migrations applied`. Verify:
+Expected output: `Migrations applied`. (You will also see `.env not found. Continuing without it.` That is normal: the container gets its variables from Compose, not from a `.env` file.) Verify:
 
 ```sh
 docker compose exec db psql -U postgres -d practice -c '\dt'
@@ -242,7 +242,7 @@ Add a top-level `networks:` section, then add `networks:` to each service. Prove
 | Problem | Likely cause |
 | --- | --- |
 | `variable is not set` warning | Missing root `.env` |
-| API exits with `Invalid environment variables` | `DATABASE_URL` empty or misspelled |
+| API exits with a `ZodError` mentioning `DATABASE_URL` | `DATABASE_URL` empty or misspelled |
 | `ECONNREFUSED 127.0.0.1:5432` | You used `localhost` instead of `db` |
 | `password authentication failed` | The DB volume was created with an older password. Run `docker compose down -v` and start again |
 | Web shows `fetch failed` | `API_URL` wrong, or the API is not healthy |

@@ -23,7 +23,7 @@ The web app lists users (server component) and has a "New user" modal (client co
 
 - Try each step yourself first. Every guide has a **Solution** at the bottom, hidden in a collapsible block. Open it only after you are stuck, then explain to your mentor why it works.
 - Do not copy-paste blindly. For every line in a Dockerfile you must be able to say what it does.
-- Never commit `.env` files with real secrets.
+- The `.env` files are committed on purpose so the project runs right after cloning. This is a practice project with throwaway values. In a real project `.env` files with secrets are **never** committed; ask your mentor why.
 
 ## Prerequisites
 
@@ -54,5 +54,7 @@ Seeing the apps work normally makes debugging containers much easier.
 cd api && npm install && npm run db:migrate && npm run db:seed && npm run dev
 cd web && npm install && npm run dev      # in another terminal
 ```
+
+(The `.env` files already exist in the repo. Check the values inside, especially `DATABASE_URL` in `api/.env`, to match your local Postgres.)
 
 Open http://localhost:3000.

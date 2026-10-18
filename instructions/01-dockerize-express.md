@@ -155,7 +155,7 @@ docker exec <container-id> ls /app          # no src/, only dist, node_modules, 
 | --- | --- |
 | `Cannot find module '/app/dist/server.js'` | The build stage failed or you did not copy `dist` into `runner` |
 | `ERR_MODULE_NOT_FOUND` / `Unknown file extension` | `package.json` is missing from the final image |
-| `Invalid environment variables` on start | You forgot `-e DATABASE_URL=...` |
+| `ZodError` ... `"path": ["DATABASE_URL"]` on start | You forgot `-e DATABASE_URL=...`. The app validates its env vars at startup (see `api/src/env.ts`) |
 | `permission denied ... /var/run/docker.sock` | Your user is not in the `docker` group. See the prerequisites in the [README](README.md) |
 | `Cannot connect to the Docker daemon` | Daemon not running: `sudo systemctl start docker` |
 | Port already in use | Another process uses 4000. Stop it or use `-p 4001:4000` |

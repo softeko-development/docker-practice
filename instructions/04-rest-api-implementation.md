@@ -37,6 +37,8 @@ Install the one new dependency:
 cd api && npm install express-rate-limit
 ```
 
+> **Reading the examples:** many `curl` commands in this guide include `-H 'Authorization: Bearer ...'` and use `/api/v1/...` URLs. Those only apply once you have finished Level 5 (auth) and Level 4 (versioning). While you are on an earlier level, leave the header out and use `/api/users/...`; extra headers do no harm.
+
 (In Docker the image is rebuilt with `docker compose up --build`, so `package.json` and `package-lock.json` must both be committed.)
 
 ---
@@ -123,7 +125,7 @@ const createBody = z
   .object({
     name: cleanString().pipe(z.string().min(2).max(100)),
     email: cleanString().pipe(z.email().max(255)).transform((email) => email.toLowerCase()),
-    bio: cleanString().pipe(z.string().max(500)).optional(),
+    bio: cleanString().pipe(z.string().max(500)).nullable().optional(), // null clears the bio
   })
   .strict();
 
@@ -133,7 +135,7 @@ const patchBody = createBody
   .refine((body) => Object.keys(body).length > 0, { message: "Send at least one field" });
 ```
 
-- `PUT` uses `createBody`: `name` and `email` are required. A missing `bio` means "no bio", so we store `null`. That is what **replace** means: the new representation completely replaces the old one.
+- `PUT` uses `createBody`: `name` and `email` are required. A missing `bio` means "no bio", so we store `null`. That is what **replace** means: the new representation completely replaces the old one. (`bio` is `.nullable()`, so a client may also send `"bio": null` explicitly; in `PATCH`, `null` clears the bio.)
 - `PATCH` uses `patchBody`: only the fields that were sent change.
 
 The updates:
@@ -782,8 +784,10 @@ The last page has **no** `next` link and the first has **no** `prev`. A client l
 The body of `GET /users/1` is now different for an admin and a normal user, but the URL is the same. Without a hint, a shared cache could hand the admin's body to a normal user. `Vary: Authorization` tells caches "this response depends on the `Authorization` request header":
 
 ```ts
-res.set("Vary", "Authorization");
+res.vary("Authorization");
 ```
+
+Use `res.vary(...)`, not `res.set("Vary", ...)`. `set` would **replace** the `Vary: Origin` that the `cors` middleware already added (caches need it to keep one copy per origin); `vary` **adds** to the existing value.
 
 Add it to `GET /users` and `GET /users/:id`. The ETag is built from `id` + `updatedAt` and does not include links; that is fine because the cache already keys on `Authorization` through `Vary`.
 
@@ -1103,7 +1107,7 @@ Read the response: `Access-Control-Allow-Origin`, `-Methods`, `-Headers`. Then c
 3. Validate the file: `npx @redocly/cli lint api/openapi.yaml`.
 
 **Pitfalls.**
-- **Docker:** the Dockerfile copies only `dist/` and `node_modules` into the final image. Your YAML will be missing at runtime; `readFileSync` throws. You need to `COPY openapi.yaml` into the `runner` stage. Helmet's CSP also blocks Swagger UI's inline scripts; you must relax it for `/docs` only, and know what you are weakening.
+- **Docker:** the Dockerfile copies only `dist/` and `node_modules` into the final image. Your YAML will be missing at runtime; `readFileSync` throws. You need to `COPY openapi.yaml` into the `runner` stage. Helmet's strict Content-Security-Policy applies to `/docs` too. `swagger-ui-express` serves its own script files, so it works with the defaults, but if you load Swagger UI assets from a CDN instead, the browser console will show CSP errors and the page stays blank. If you relax the policy, do it for `/docs` only and know what you are weakening.
 - Keep the file honest: change an endpoint, change the YAML.
 
 **Test.** Open http://localhost:4000/docs, click *Authorize*, paste a token, and execute `GET /users`.
@@ -1121,7 +1125,7 @@ Read the response: `Access-Control-Allow-Origin`, `-Methods`, `-Headers`. Then c
    if (process.env.NODE_ENV !== "test") app.listen(env.PORT, () => console.log(`API listening on :${env.PORT}`));
    ```
    Vitest sets `NODE_ENV=test` automatically.
-3. Use a **separate database** (`practice_test`), never your dev data. Set `DATABASE_URL` for tests in `api/.env.test` and load it (`vitest --env-file`, or `test.env` in `vitest.config.ts`).
+3. Use a **separate database** (`practice_test`), never your dev data. Set `DATABASE_URL` for tests (plus `ADMIN_TOKEN` and `USER_TOKEN`, which `env.ts` requires) in `api/.env.test` and load it (`vitest --env-file`, or `test.env` in `vitest.config.ts`).
 4. Reset between tests: `await db.delete(users)` in a `beforeEach`.
 
 **Skeleton:**
@@ -1203,7 +1207,7 @@ const createBody = z
   .object({
     name: cleanString().pipe(z.string().min(2).max(100)),
     email: cleanString().pipe(z.email().max(255)).transform((email) => email.toLowerCase()),
-    bio: cleanString().pipe(z.string().max(500)).optional(),
+    bio: cleanString().pipe(z.string().max(500)).nullable().optional(), // null clears the bio
   })
   .strict();
 
@@ -1304,7 +1308,7 @@ usersRouter
 
     res.set("X-Total-Count", String(total));
     if (links.length) res.set("Link", links.join(", "));
-    res.set("Cache-Control", "private, no-cache").set("Vary", "Authorization");
+    res.set("Cache-Control", "private, no-cache").vary("Authorization");
     res.json({
       data: data.map((user) => withLinks(req.baseUrl, res.locals.role, user)),
       meta: { page, limit, total, totalPages },
@@ -1355,7 +1359,7 @@ usersRouter
     res
       .set("ETag", etagOf(user))
       .set("Cache-Control", "private, no-cache")
-      .set("Vary", "Authorization") // the body differs per role (admins get more links)
+      .vary("Authorization") // the body differs per role (admins get more links)
       .json({ data: withLinks(req.baseUrl, res.locals.role, user) });
   })
 
